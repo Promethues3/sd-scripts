@@ -74,30 +74,27 @@ SCHEDULER_LINEAR_END = 0.0120
 SCHEDULER_TIMESTEPS = 1000
 SCHEDLER_SCHEDULE = "scaled_linear"
 
-# その他の設定
+# 其他设定
 LATENT_CHANNELS = 4
 DOWNSAMPLING_FACTOR = 8
 
 CLIP_VISION_MODEL = "laion/CLIP-ViT-bigG-14-laion2B-39B-b160k"
 
-# region モジュール入れ替え部
-"""
-高速化のためのモジュール入れ替え
-"""
+# region模块更换部
 
 
 def replace_unet_modules(unet: diffusers.models.unet_2d_condition.UNet2DConditionModel, mem_eff_attn, xformers, sdpa):
     if mem_eff_attn:
         logger.info("Enable memory efficient attention for U-Net")
 
-        # これはDiffusersのU-Netではなく自前のU-Netなので置き換えなくても良い
+        # 这不是Diffusers的U-Net，而是自己的U-Net，所以不用置换
         unet.set_use_memory_efficient_attention(False, True)
     elif xformers:
         logger.info("Enable xformers for U-Net")
         try:
             import xformers.ops
         except ImportError:
-            raise ImportError("No xformers / xformersがインストールされていないようです")
+            raise ImportError("No xformers / 没有安装xformer")
 
         unet.set_use_memory_efficient_attention(True, False)
     elif sdpa:
@@ -111,14 +108,15 @@ def replace_vae_modules(vae: diffusers.models.AutoencoderKL, mem_eff_attn, xform
     if mem_eff_attn:
         replace_vae_attn_to_memory_efficient()
     elif xformers:
-        # replace_vae_attn_to_xformers() # 解像度によってxformersがエラーを出す？
-        vae.set_use_memory_efficient_attention_xformers(True)  # とりあえずこっちを使う
+        # replace_vae_attn_to_xformers() # 根据分辨率xformers会出错吗？
+        vae.set_use_memory_efficient_attention_xformers(True)  # 先用这个
     elif sdpa:
         replace_vae_attn_to_sdpa()
 
 
 def replace_vae_attn_to_memory_efficient():
-    logger.info("VAE Attention.forward has been replaced to FlashAttention (not xformers)")
+    logger.info(
+        "VAE Attention.forward has been replaced to FlashAttention (not xformers)")
     flash_func = FlashAttentionFunction
 
     def forward_flash_attn(self, hidden_states, **kwargs):
@@ -131,7 +129,8 @@ def replace_vae_attn_to_memory_efficient():
         # norm
         hidden_states = self.group_norm(hidden_states)
 
-        hidden_states = hidden_states.view(batch, channel, height * width).transpose(1, 2)
+        hidden_states = hidden_states.view(
+            batch, channel, height * width).transpose(1, 2)
 
         # proj to q, k, v
         query_proj = self.to_q(hidden_states)
@@ -139,10 +138,12 @@ def replace_vae_attn_to_memory_efficient():
         value_proj = self.to_v(hidden_states)
 
         query_proj, key_proj, value_proj = map(
-            lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), (query_proj, key_proj, value_proj)
+            lambda t: rearrange(t, "b n (h d) -> b h n d",
+                                h=self.heads), (query_proj, key_proj, value_proj)
         )
 
-        out = flash_func.apply(query_proj, key_proj, value_proj, None, False, q_bucket_size, k_bucket_size)
+        out = flash_func.apply(
+            query_proj, key_proj, value_proj, None, False, q_bucket_size, k_bucket_size)
 
         out = rearrange(out, "b h n d -> b n (h d)")
 
@@ -152,7 +153,8 @@ def replace_vae_attn_to_memory_efficient():
         # dropout
         hidden_states = self.to_out[1](hidden_states)
 
-        hidden_states = hidden_states.transpose(-1, -2).reshape(batch, channel, height, width)
+        hidden_states = hidden_states.transpose(
+            -1, -2).reshape(batch, channel, height, width)
 
         # res connect and rescale
         hidden_states = (hidden_states + residual) / self.rescale_output_factor
@@ -184,7 +186,8 @@ def replace_vae_attn_to_xformers():
         # norm
         hidden_states = self.group_norm(hidden_states)
 
-        hidden_states = hidden_states.view(batch, channel, height * width).transpose(1, 2)
+        hidden_states = hidden_states.view(
+            batch, channel, height * width).transpose(1, 2)
 
         # proj to q, k, v
         query_proj = self.to_q(hidden_states)
@@ -192,13 +195,15 @@ def replace_vae_attn_to_xformers():
         value_proj = self.to_v(hidden_states)
 
         query_proj, key_proj, value_proj = map(
-            lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), (query_proj, key_proj, value_proj)
+            lambda t: rearrange(t, "b n (h d) -> b h n d",
+                                h=self.heads), (query_proj, key_proj, value_proj)
         )
 
         query_proj = query_proj.contiguous()
         key_proj = key_proj.contiguous()
         value_proj = value_proj.contiguous()
-        out = xformers.ops.memory_efficient_attention(query_proj, key_proj, value_proj, attn_bias=None)
+        out = xformers.ops.memory_efficient_attention(
+            query_proj, key_proj, value_proj, attn_bias=None)
 
         out = rearrange(out, "b h n d -> b n (h d)")
 
@@ -208,7 +213,8 @@ def replace_vae_attn_to_xformers():
         # dropout
         hidden_states = self.to_out[1](hidden_states)
 
-        hidden_states = hidden_states.transpose(-1, -2).reshape(batch, channel, height, width)
+        hidden_states = hidden_states.transpose(
+            -1, -2).reshape(batch, channel, height, width)
 
         # res connect and rescale
         hidden_states = (hidden_states + residual) / self.rescale_output_factor
@@ -239,7 +245,8 @@ def replace_vae_attn_to_sdpa():
         # norm
         hidden_states = self.group_norm(hidden_states)
 
-        hidden_states = hidden_states.view(batch, channel, height * width).transpose(1, 2)
+        hidden_states = hidden_states.view(
+            batch, channel, height * width).transpose(1, 2)
 
         # proj to q, k, v
         query_proj = self.to_q(hidden_states)
@@ -247,7 +254,8 @@ def replace_vae_attn_to_sdpa():
         value_proj = self.to_v(hidden_states)
 
         query_proj, key_proj, value_proj = map(
-            lambda t: rearrange(t, "b n (h d) -> b n h d", h=self.heads), (query_proj, key_proj, value_proj)
+            lambda t: rearrange(t, "b n (h d) -> b n h d",
+                                h=self.heads), (query_proj, key_proj, value_proj)
         )
 
         out = torch.nn.functional.scaled_dot_product_attention(
@@ -262,7 +270,8 @@ def replace_vae_attn_to_sdpa():
         # dropout
         hidden_states = self.to_out[1](hidden_states)
 
-        hidden_states = hidden_states.transpose(-1, -2).reshape(batch, channel, height, width)
+        hidden_states = hidden_states.transpose(
+            -1, -2).reshape(batch, channel, height, width)
 
         # res connect and rescale
         hidden_states = (hidden_states + residual) / self.rescale_output_factor
@@ -285,9 +294,9 @@ def replace_vae_attn_to_sdpa():
 
 # endregion
 
-# region 画像生成の本体：lpw_stable_diffusion.py （ASL）からコピーして修正
+# 区域图像生成原件：lpw_stable_diffusion.py（ASL）
 # https://github.com/huggingface/diffusers/blob/main/examples/community/lpw_stable_diffusion.py
-# Pipelineだけ独立して使えないのと機能追加するのとでコピーして修正
+# 复制并修复该功能，将其单独添加到Pipeline中
 
 
 class PipelineLike:
@@ -316,7 +325,8 @@ class PipelineLike:
                 " it would be very nice if you could open a Pull request for the `scheduler/scheduler_config.json`"
                 " file"
             )
-            deprecate("steps_offset!=1", "1.0.0", deprecation_message, standard_warn=False)
+            deprecate("steps_offset!=1", "1.0.0",
+                      deprecation_message, standard_warn=False)
             new_config = dict(scheduler.config)
             new_config["steps_offset"] = 1
             scheduler._internal_dict = FrozenDict(new_config)
@@ -329,7 +339,8 @@ class PipelineLike:
                 " future versions. If you have downloaded this checkpoint from the Hugging Face Hub, it would be very"
                 " nice if you could open a Pull request for the `scheduler/scheduler_config.json` file"
             )
-            deprecate("clip_sample not set", "1.0.0", deprecation_message, standard_warn=False)
+            deprecate("clip_sample not set", "1.0.0",
+                      deprecation_message, standard_warn=False)
             new_config = dict(scheduler.config)
             new_config["clip_sample"] = False
             scheduler._internal_dict = FrozenDict(new_config)
@@ -337,7 +348,8 @@ class PipelineLike:
         self.vae = vae
         self.text_encoders = text_encoders
         self.tokenizers = tokenizers
-        self.unet: Union[InferUNet2DConditionModel, InferSdxlUNet2DConditionModel] = unet
+        self.unet: Union[InferUNet2DConditionModel,
+                         InferSdxlUNet2DConditionModel] = unet
         self.scheduler = scheduler
         self.safety_checker = None
 
@@ -396,15 +408,18 @@ class PipelineLike:
             self.gradual_latent = None
         else:
             logger.info(f"gradual_latent is enabled: {gradual_latent}")
-            self.gradual_latent = gradual_latent  # (ds_ratio, start_timesteps, every_n_steps, ratio_step)
+            # (ds_ratio, start_timesteps, every_n_steps, ratio_step)
+            self.gradual_latent = gradual_latent
 
     @torch.no_grad()
     def __call__(
         self,
         prompt: Union[str, List[str]],
         negative_prompt: Optional[Union[str, List[str]]] = None,
-        init_image: Union[torch.FloatTensor, PIL.Image.Image, List[PIL.Image.Image]] = None,
-        mask_image: Union[torch.FloatTensor, PIL.Image.Image, List[PIL.Image.Image]] = None,
+        init_image: Union[torch.FloatTensor,
+                          PIL.Image.Image, List[PIL.Image.Image]] = None,
+        mask_image: Union[torch.FloatTensor,
+                          PIL.Image.Image, List[PIL.Image.Image]] = None,
         height: int = 1024,
         width: int = 1024,
         original_height: int = None,
@@ -426,7 +441,8 @@ class PipelineLike:
         vae_batch_size: float = None,
         return_latents: bool = False,
         # return_dict: bool = True,
-        callback: Optional[Callable[[int, int, torch.FloatTensor], None]] = None,
+        callback: Optional[Callable[[
+            int, int, torch.FloatTensor], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool]] = None,
         callback_steps: Optional[int] = 1,
         img2img_noise=None,
@@ -443,7 +459,8 @@ class PipelineLike:
         elif isinstance(prompt, list):
             batch_size = len(prompt)
         else:
-            raise ValueError(f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
+            raise ValueError(
+                f"`prompt` has to be of type `str` or `list` but is {type(prompt)}")
         regional_network = " AND " in prompt[0]
 
         vae_batch_size = (
@@ -453,13 +470,16 @@ class PipelineLike:
         )
 
         if strength < 0 or strength > 1:
-            raise ValueError(f"The value of strength should in [0.0, 1.0] but is {strength}")
+            raise ValueError(
+                f"The value of strength should in [0.0, 1.0] but is {strength}")
 
         if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
+            raise ValueError(
+                f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
         if (callback_steps is None) or (
-            callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0)
+            callback_steps is not None and (not isinstance(
+                callback_steps, int) or callback_steps <= 0)
         ):
             raise ValueError(
                 f"`callback_steps` has to be a positive integer but is {callback_steps} of type" f" {type(callback_steps)}."
@@ -473,7 +493,8 @@ class PipelineLike:
         do_classifier_free_guidance = guidance_scale > 1.0
 
         if not do_classifier_free_guidance and negative_scale is not None:
-            logger.warning(f"negative_scale is ignored if guidance scalle <= 1.0")
+            logger.warning(
+                f"negative_scale is ignored if guidance scalle <= 1.0")
             negative_scale = None
 
         # get unconditional embeddings for classifier free guidance
@@ -531,27 +552,33 @@ class PipelineLike:
         text_embeddings = tes_text_embs[0]
         uncond_embeddings = tes_uncond_embs[0]
         for i in range(1, len(tes_text_embs)):
-            text_embeddings = torch.cat([text_embeddings, tes_text_embs[i]], dim=2)  # n,77,2048
+            text_embeddings = torch.cat(
+                [text_embeddings, tes_text_embs[i]], dim=2)  # n,77,2048
             if do_classifier_free_guidance:
-                uncond_embeddings = torch.cat([uncond_embeddings, tes_uncond_embs[i]], dim=2)  # n,77,2048
+                uncond_embeddings = torch.cat(
+                    [uncond_embeddings, tes_uncond_embs[i]], dim=2)  # n,77,2048
 
         if do_classifier_free_guidance:
             if negative_scale is None:
-                text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
+                text_embeddings = torch.cat(
+                    [uncond_embeddings, text_embeddings])
             else:
-                text_embeddings = torch.cat([uncond_embeddings, text_embeddings, real_uncond_embeddings])
+                text_embeddings = torch.cat(
+                    [uncond_embeddings, text_embeddings, real_uncond_embeddings])
 
         if self.control_net_lllites:
             # ControlNetのhintにguide imageを流用する。ControlNetの場合はControlNet側で行う
             if isinstance(clip_guide_images, PIL.Image.Image):
                 clip_guide_images = [clip_guide_images]
             if isinstance(clip_guide_images[0], PIL.Image.Image):
-                clip_guide_images = [preprocess_image(im) for im in clip_guide_images]
+                clip_guide_images = [preprocess_image(
+                    im) for im in clip_guide_images]
                 clip_guide_images = torch.cat(clip_guide_images)
             if isinstance(clip_guide_images, list):
                 clip_guide_images = torch.stack(clip_guide_images)
 
-            clip_guide_images = clip_guide_images.to(self.device, dtype=text_embeddings.dtype)
+            clip_guide_images = clip_guide_images.to(
+                self.device, dtype=text_embeddings.dtype)
 
         # create size embs
         if original_height is None:
@@ -567,24 +594,34 @@ class PipelineLike:
         if crop_left is None:
             crop_left = 0
         if self.is_sdxl:
-            emb1 = sdxl_train_util.get_timestep_embedding(torch.FloatTensor([original_height, original_width]).unsqueeze(0), 256)
+            emb1 = sdxl_train_util.get_timestep_embedding(torch.FloatTensor(
+                [original_height, original_width]).unsqueeze(0), 256)
             uc_emb1 = sdxl_train_util.get_timestep_embedding(
-                torch.FloatTensor([original_height_negative, original_width_negative]).unsqueeze(0), 256
+                torch.FloatTensor(
+                    [original_height_negative, original_width_negative]).unsqueeze(0), 256
             )
-            emb2 = sdxl_train_util.get_timestep_embedding(torch.FloatTensor([crop_top, crop_left]).unsqueeze(0), 256)
-            emb3 = sdxl_train_util.get_timestep_embedding(torch.FloatTensor([height, width]).unsqueeze(0), 256)
-            c_vector = torch.cat([emb1, emb2, emb3], dim=1).to(self.device, dtype=text_embeddings.dtype).repeat(batch_size, 1)
-            uc_vector = torch.cat([uc_emb1, emb2, emb3], dim=1).to(self.device, dtype=text_embeddings.dtype).repeat(batch_size, 1)
+            emb2 = sdxl_train_util.get_timestep_embedding(
+                torch.FloatTensor([crop_top, crop_left]).unsqueeze(0), 256)
+            emb3 = sdxl_train_util.get_timestep_embedding(
+                torch.FloatTensor([height, width]).unsqueeze(0), 256)
+            c_vector = torch.cat([emb1, emb2, emb3], dim=1).to(
+                self.device, dtype=text_embeddings.dtype).repeat(batch_size, 1)
+            uc_vector = torch.cat([uc_emb1, emb2, emb3], dim=1).to(
+                self.device, dtype=text_embeddings.dtype).repeat(batch_size, 1)
 
             if regional_network:
                 # use last pool for conditioning
                 num_sub_prompts = len(text_pool) // batch_size
-                text_pool = text_pool[num_sub_prompts - 1 :: num_sub_prompts]  # last subprompt
+                text_pool = text_pool[num_sub_prompts -
+                                      1:: num_sub_prompts]  # last subprompt
 
             if init_image is not None and self.clip_vision_model is not None:
-                logger.info(f"encode by clip_vision_model and apply clip_vision_strength={self.clip_vision_strength}")
-                vision_input = self.clip_vision_processor(init_image, return_tensors="pt", device=self.device)
-                pixel_values = vision_input["pixel_values"].to(self.device, dtype=text_embeddings.dtype)
+                logger.info(
+                    f"encode by clip_vision_model and apply clip_vision_strength={self.clip_vision_strength}")
+                vision_input = self.clip_vision_processor(
+                    init_image, return_tensors="pt", device=self.device)
+                pixel_values = vision_input["pixel_values"].to(
+                    self.device, dtype=text_embeddings.dtype)
 
                 clip_vision_embeddings = self.clip_vision_model(
                     pixel_values=pixel_values, output_hidden_states=True, return_dict=True
@@ -592,11 +629,13 @@ class PipelineLike:
                 clip_vision_embeddings = clip_vision_embeddings.image_embeds
 
                 if len(clip_vision_embeddings) == 1 and batch_size > 1:
-                    clip_vision_embeddings = clip_vision_embeddings.repeat((batch_size, 1))
+                    clip_vision_embeddings = clip_vision_embeddings.repeat(
+                        (batch_size, 1))
 
                 clip_vision_embeddings = clip_vision_embeddings * self.clip_vision_strength
                 assert clip_vision_embeddings.shape == text_pool.shape, f"{clip_vision_embeddings.shape} != {text_pool.shape}"
-                text_pool = clip_vision_embeddings  # replace: same as ComfyUI (?)
+                # replace: same as ComfyUI (?)
+                text_pool = clip_vision_embeddings
 
             c_vector = torch.cat([text_pool, c_vector], dim=1)
             if do_classifier_free_guidance:
@@ -643,7 +682,8 @@ class PipelineLike:
                     )
             else:
                 if latents.shape != latents_shape:
-                    raise ValueError(f"Unexpected latents shape, got {latents.shape}, expected {latents_shape}")
+                    raise ValueError(
+                        f"Unexpected latents shape, got {latents.shape}, expected {latents_shape}")
                 latents = latents.to(self.device)
 
             timesteps = self.scheduler.timesteps.to(self.device)
@@ -665,7 +705,9 @@ class PipelineLike:
                 if isinstance(mask_image, PIL.Image.Image):
                     mask_image = [mask_image]
                 if isinstance(mask_image[0], PIL.Image.Image):
-                    mask_image = torch.cat([preprocess_mask(im) for im in mask_image])  # H*W, 0 for repaint
+                    # H*W, 0 for repaint
+                    mask_image = torch.cat(
+                        [preprocess_mask(im) for im in mask_image])
 
             # encode the init image into latents and scale the latents
             init_image = init_image.to(device=self.device, dtype=latents_dtype)
@@ -673,7 +715,8 @@ class PipelineLike:
                 init_latents = init_image
             else:
                 if vae_batch_size >= batch_size:
-                    init_latent_dist = self.vae.encode(init_image.to(self.vae.dtype)).latent_dist
+                    init_latent_dist = self.vae.encode(
+                        init_image.to(self.vae.dtype)).latent_dist
                     init_latents = init_latent_dist.sample(generator=generator)
                 else:
                     if torch.cuda.is_available():
@@ -681,14 +724,16 @@ class PipelineLike:
                     init_latents = []
                     for i in tqdm(range(0, min(batch_size, len(init_image)), vae_batch_size)):
                         init_latent_dist = self.vae.encode(
-                            (init_image[i : i + vae_batch_size] if vae_batch_size > 1 else init_image[i].unsqueeze(0)).to(
+                            (init_image[i: i + vae_batch_size] if vae_batch_size > 1 else init_image[i].unsqueeze(0)).to(
                                 self.vae.dtype
                             )
                         ).latent_dist
-                        init_latents.append(init_latent_dist.sample(generator=generator))
+                        init_latents.append(
+                            init_latent_dist.sample(generator=generator))
                     init_latents = torch.cat(init_latents)
 
-                init_latents = (sdxl_model_util.VAE_SCALE_FACTOR if self.is_sdxl else 0.18215) * init_latents
+                init_latents = (
+                    sdxl_model_util.VAE_SCALE_FACTOR if self.is_sdxl else 0.18215) * init_latents
 
             if len(init_latents) == 1:
                 init_latents = init_latents.repeat((batch_size, 1, 1, 1))
@@ -702,7 +747,8 @@ class PipelineLike:
 
                 # check sizes
                 if not mask.shape == init_latents.shape:
-                    raise ValueError("The mask and init_image should be the same size!")
+                    raise ValueError(
+                        "The mask and init_image should be the same size!")
 
             # get the original timestep using init_timestep
             offset = self.scheduler.config.get("steps_offset", 0)
@@ -710,10 +756,12 @@ class PipelineLike:
             init_timestep = min(init_timestep, num_inference_steps)
 
             timesteps = self.scheduler.timesteps[-init_timestep]
-            timesteps = torch.tensor([timesteps] * batch_size * num_images_per_prompt, device=self.device)
+            timesteps = torch.tensor(
+                [timesteps] * batch_size * num_images_per_prompt, device=self.device)
 
             # add noise to latents using the timesteps
-            latents = self.scheduler.add_noise(init_latents, img2img_noise, timesteps)
+            latents = self.scheduler.add_noise(
+                init_latents, img2img_noise, timesteps)
 
             t_start = max(num_inference_steps - init_timestep + offset, 0)
             timesteps = self.scheduler.timesteps[t_start:].to(self.device)
@@ -722,16 +770,20 @@ class PipelineLike:
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
-        accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
+        accepts_eta = "eta" in set(inspect.signature(
+            self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
         if accepts_eta:
             extra_step_kwargs["eta"] = eta
 
-        num_latent_input = (3 if negative_scale is not None else 2) if do_classifier_free_guidance else 1
+        num_latent_input = (
+            3 if negative_scale is not None else 2) if do_classifier_free_guidance else 1
 
         if self.control_nets:
-            guided_hints = original_control_net.get_guided_hints(self.control_nets, num_latent_input, batch_size, clip_guide_images)
-            each_control_net_enabled = [self.control_net_enabled] * len(self.control_nets)
+            guided_hints = original_control_net.get_guided_hints(
+                self.control_nets, num_latent_input, batch_size, clip_guide_images)
+            each_control_net_enabled = [
+                self.control_net_enabled] * len(self.control_nets)
 
         if self.control_net_lllites:
             # guided_hints = original_control_net.get_guided_hints(self.control_nets, num_latent_input, batch_size, clip_guide_images)
@@ -743,12 +795,14 @@ class PipelineLike:
                 for control_net, _ in self.control_net_lllites:
                     control_net.set_cond_image(None)
 
-            each_control_net_enabled = [self.control_net_enabled] * len(self.control_net_lllites)
+            each_control_net_enabled = [
+                self.control_net_enabled] * len(self.control_net_lllites)
 
         enable_gradual_latent = False
         if self.gradual_latent:
             if not hasattr(self.scheduler, "set_gradual_latent_params"):
-                logger.warning("gradual_latent is not supported for this scheduler. Ignoring.")
+                logger.warning(
+                    "gradual_latent is not supported for this scheduler. Ignoring.")
                 logger.warning(f"{self.scheduler.__class__.__name__}")
             else:
                 enable_gradual_latent = True
@@ -777,12 +831,14 @@ class PipelineLike:
                     and current_ratio < 1.0
                     and step_elapsed >= self.gradual_latent.every_n_steps
                 ):
-                    current_ratio = min(current_ratio + self.gradual_latent.ratio_step, 1.0)
+                    current_ratio = min(
+                        current_ratio + self.gradual_latent.ratio_step, 1.0)
                     # make divisible by 8 because size of latents must be divisible at bottom of UNet
                     h = int(height * current_ratio) // 8 * 8
                     w = int(width * current_ratio) // 8 * 8
                     resized_size = (h, w)
-                    self.scheduler.set_gradual_latent_params(resized_size, self.gradual_latent)
+                    self.scheduler.set_gradual_latent_params(
+                        resized_size, self.gradual_latent)
                     step_elapsed = 0
                 else:
                     self.scheduler.set_gradual_latent_params(None, None)
@@ -790,7 +846,8 @@ class PipelineLike:
 
             # expand the latents if we are doing classifier free guidance
             latent_model_input = latents.repeat((num_latent_input, 1, 1, 1))
-            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+            latent_model_input = self.scheduler.scale_model_input(
+                latent_model_input, t)
 
             # disable ControlNet-LLLite if ratio is set. ControlNet is disabled in ControlNetInfo
             if self.control_net_lllites:
@@ -798,15 +855,19 @@ class PipelineLike:
                     if not enabled or ratio >= 1.0:
                         continue
                     if ratio < i / len(timesteps):
-                        logger.info(f"ControlNetLLLite {j} is disabled (ratio={ratio} at {i} / {len(timesteps)})")
+                        logger.info(
+                            f"ControlNetLLLite {j} is disabled (ratio={ratio} at {i} / {len(timesteps)})")
                         control_net.set_cond_image(None)
                         each_control_net_enabled[j] = False
 
             # predict the noise residual
             if self.control_nets and self.control_net_enabled:
                 if regional_network:
-                    num_sub_and_neg_prompts = len(text_embeddings) // batch_size
-                    text_emb_last = text_embeddings[num_sub_and_neg_prompts - 2 :: num_sub_and_neg_prompts]  # last subprompt
+                    num_sub_and_neg_prompts = len(
+                        text_embeddings) // batch_size
+                    # last subprompt
+                    text_emb_last = text_embeddings[num_sub_and_neg_prompts -
+                                                    2:: num_sub_and_neg_prompts]
                 else:
                     text_emb_last = text_embeddings
 
@@ -823,31 +884,39 @@ class PipelineLike:
                     text_emb_last,
                 ).sample
             elif self.is_sdxl:
-                noise_pred = self.unet(latent_model_input, t, text_embeddings, vector_embeddings)
+                noise_pred = self.unet(
+                    latent_model_input, t, text_embeddings, vector_embeddings)
             else:
-                noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
+                noise_pred = self.unet(
+                    latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
             # perform guidance
             if do_classifier_free_guidance:
                 if negative_scale is None:
-                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(num_latent_input)  # uncond by negative prompt
-                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(
+                        num_latent_input)  # uncond by negative prompt
+                    noise_pred = noise_pred_uncond + guidance_scale * \
+                        (noise_pred_text - noise_pred_uncond)
                 else:
                     noise_pred_negative, noise_pred_text, noise_pred_uncond = noise_pred.chunk(
                         num_latent_input
                     )  # uncond is real uncond
                     noise_pred = (
                         noise_pred_uncond
-                        + guidance_scale * (noise_pred_text - noise_pred_uncond)
-                        - negative_scale * (noise_pred_negative - noise_pred_uncond)
+                        + guidance_scale *
+                        (noise_pred_text - noise_pred_uncond)
+                        - negative_scale *
+                        (noise_pred_negative - noise_pred_uncond)
                     )
 
             # compute the previous noisy sample x_t -> x_t-1
-            latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs).prev_sample
+            latents = self.scheduler.step(
+                noise_pred, t, latents, **extra_step_kwargs).prev_sample
 
             if mask is not None:
                 # masking
-                init_latents_proper = self.scheduler.add_noise(init_latents_orig, img2img_noise, torch.tensor([t]))
+                init_latents_proper = self.scheduler.add_noise(
+                    init_latents_orig, img2img_noise, torch.tensor([t]))
                 latents = (init_latents_proper * mask) + (latents * (1 - mask))
 
             # call the callback, if provided
@@ -860,7 +929,8 @@ class PipelineLike:
         if return_latents:
             return latents
 
-        latents = 1 / (sdxl_model_util.VAE_SCALE_FACTOR if self.is_sdxl else 0.18215) * latents
+        latents = 1 / \
+            (sdxl_model_util.VAE_SCALE_FACTOR if self.is_sdxl else 0.18215) * latents
         if vae_batch_size >= batch_size:
             image = self.vae.decode(latents.to(self.vae.dtype)).sample
         else:
@@ -870,7 +940,8 @@ class PipelineLike:
             for i in tqdm(range(0, batch_size, vae_batch_size)):
                 images.append(
                     self.vae.decode(
-                        (latents[i : i + vae_batch_size] if vae_batch_size > 1 else latents[i].unsqueeze(0)).to(self.vae.dtype)
+                        (latents[i: i + vae_batch_size] if vae_batch_size >
+                         1 else latents[i].unsqueeze(0)).to(self.vae.dtype)
                     ).sample
                 )
             image = torch.cat(images)
@@ -1018,10 +1089,11 @@ def get_prompts_with_weights(tokenizer: CLIPTokenizer, token_replacer, prompt: L
         for word, weight in texts_and_weights:
             if word.strip() == "BREAK":
                 # pad until next multiple of tokenizer's max token length
-                pad_len = tokenizer.model_max_length - (len(text_token) % tokenizer.model_max_length)
+                pad_len = tokenizer.model_max_length - \
+                    (len(text_token) % tokenizer.model_max_length)
                 logger.info(f"BREAK pad_len: {pad_len}")
                 for i in range(pad_len):
-                    # v2のときEOSをつけるべきかどうかわからないぜ
+                    # 不知道v2的时候是否应该安装EOS
                     # if i == 0:
                     #     text_token.append(tokenizer.eos_token_id)
                     # else:
@@ -1049,7 +1121,8 @@ def get_prompts_with_weights(tokenizer: CLIPTokenizer, token_replacer, prompt: L
         tokens.append(text_token)
         weights.append(text_weight)
     if truncated:
-        logger.warning("warning: Prompt was truncated. Try to shorten the prompt or increase max_embeddings_multiples")
+        logger.warning(
+            "warning: Prompt was truncated. Try to shorten the prompt or increase max_embeddings_multiples")
     return tokens, weights
 
 
@@ -1060,9 +1133,11 @@ def pad_tokens_and_weights(tokens, weights, max_length, bos, eos, pad, no_boseos
     max_embeddings_multiples = (max_length - 2) // (chunk_length - 2)
     weights_length = max_length if no_boseos_middle else max_embeddings_multiples * chunk_length
     for i in range(len(tokens)):
-        tokens[i] = [bos] + tokens[i] + [eos] + [pad] * (max_length - 2 - len(tokens[i]))
+        tokens[i] = [bos] + tokens[i] + [eos] + \
+            [pad] * (max_length - 2 - len(tokens[i]))
         if no_boseos_middle:
-            weights[i] = [1.0] + weights[i] + [1.0] * (max_length - 1 - len(weights[i]))
+            weights[i] = [1.0] + weights[i] + [1.0] * \
+                (max_length - 1 - len(weights[i]))
         else:
             w = []
             if len(weights[i]) == 0:
@@ -1070,7 +1145,7 @@ def pad_tokens_and_weights(tokens, weights, max_length, bos, eos, pad, no_boseos
             else:
                 for j in range(max_embeddings_multiples):
                     w.append(1.0)  # weight for starting token in this chunk
-                    w += weights[i][j * (chunk_length - 2) : min(len(weights[i]), (j + 1) * (chunk_length - 2))]
+                    w += weights[i][j * (chunk_length - 2): min(len(weights[i]), (j + 1) * (chunk_length - 2))]
                     w.append(1.0)  # weight for ending token in this chunk
                 w += [1.0] * (weights_length - len(w))
             weights[i] = w[:]
@@ -1098,7 +1173,8 @@ def get_unweighted_text_embeddings(
         pool = None
         for i in range(max_embeddings_multiples):
             # extract the i-th chunk
-            text_input_chunk = text_input[:, i * (chunk_length - 2) : (i + 1) * (chunk_length - 2) + 2].clone()
+            text_input_chunk = text_input[:, i * (chunk_length - 2): (
+                i + 1) * (chunk_length - 2) + 2].clone()
 
             # cover the head and the tail by the starting and the ending tokens
             text_input_chunk[:, 0] = text_input[0, 0]
@@ -1106,20 +1182,25 @@ def get_unweighted_text_embeddings(
                 text_input_chunk[:, -1] = text_input[0, -1]
             else:  # v2
                 for j in range(len(text_input_chunk)):
-                    if text_input_chunk[j, -1] != eos and text_input_chunk[j, -1] != pad:  # 最後に普通の文字がある
+                    # 最後に普通の文字がある
+                    if text_input_chunk[j, -1] != eos and text_input_chunk[j, -1] != pad:
                         text_input_chunk[j, -1] = eos
                     if text_input_chunk[j, 1] == pad:  # BOSだけであとはPAD
                         text_input_chunk[j, 1] = eos
 
             # in sdxl, value of clip_skip is same for Text Encoder 1 and 2
-            enc_out = text_encoder(text_input_chunk, output_hidden_states=True, return_dict=True)
+            enc_out = text_encoder(
+                text_input_chunk, output_hidden_states=True, return_dict=True)
             text_embedding = enc_out["hidden_states"][-clip_skip]
             if not is_sdxl:  # SD 1.5 requires final_layer_norm
-                text_embedding = text_encoder.text_model.final_layer_norm(text_embedding)
+                text_embedding = text_encoder.text_model.final_layer_norm(
+                    text_embedding)
             if pool is None:
-                pool = enc_out.get("text_embeds", None)  # use 1st chunk, if provided
+                # use 1st chunk, if provided
+                pool = enc_out.get("text_embeds", None)
                 if pool is not None:
-                    pool = train_util.pool_workaround(text_encoder, enc_out["last_hidden_state"], text_input_chunk, eos)
+                    pool = train_util.pool_workaround(
+                        text_encoder, enc_out["last_hidden_state"], text_input_chunk, eos)
 
             if no_boseos_middle:
                 if i == 0:
@@ -1135,13 +1216,17 @@ def get_unweighted_text_embeddings(
             text_embeddings.append(text_embedding)
         text_embeddings = torch.concat(text_embeddings, axis=1)
     else:
-        enc_out = text_encoder(text_input, output_hidden_states=True, return_dict=True)
+        enc_out = text_encoder(
+            text_input, output_hidden_states=True, return_dict=True)
         text_embeddings = enc_out["hidden_states"][-clip_skip]
         if not is_sdxl:  # SD 1.5 requires final_layer_norm
-            text_embeddings = text_encoder.text_model.final_layer_norm(text_embeddings)
-        pool = enc_out.get("text_embeds", None)  # text encoder 1 doesn't return this
+            text_embeddings = text_encoder.text_model.final_layer_norm(
+                text_embeddings)
+        # text encoder 1 doesn't return this
+        pool = enc_out.get("text_embeds", None)
         if pool is not None:
-            pool = train_util.pool_workaround(text_encoder, enc_out["last_hidden_state"], text_input, eos)
+            pool = train_util.pool_workaround(
+                text_encoder, enc_out["last_hidden_state"], text_input, eos)
     return text_embeddings, pool
 
 
@@ -1158,10 +1243,12 @@ def get_weighted_text_embeddings(
     clip_skip: int = 1,
     token_replacer=None,
     device=None,
-    emb_normalize_mode: Optional[str] = "original",  # "original", "abs", "none"
+    # "original", "abs", "none"
+    emb_normalize_mode: Optional[str] = "original",
     **kwargs,
 ):
-    max_length = (tokenizer.model_max_length - 2) * max_embeddings_multiples + 2
+    max_length = (tokenizer.model_max_length - 2) * \
+        max_embeddings_multiples + 2
     if isinstance(prompt, str):
         prompt = [prompt]
 
@@ -1172,31 +1259,37 @@ def get_weighted_text_embeddings(
     prompt = new_prompts
 
     if not skip_parsing:
-        prompt_tokens, prompt_weights = get_prompts_with_weights(tokenizer, token_replacer, prompt, max_length - 2)
+        prompt_tokens, prompt_weights = get_prompts_with_weights(
+            tokenizer, token_replacer, prompt, max_length - 2)
         if uncond_prompt is not None:
             if isinstance(uncond_prompt, str):
                 uncond_prompt = [uncond_prompt]
-            uncond_tokens, uncond_weights = get_prompts_with_weights(tokenizer, token_replacer, uncond_prompt, max_length - 2)
+            uncond_tokens, uncond_weights = get_prompts_with_weights(
+                tokenizer, token_replacer, uncond_prompt, max_length - 2)
     else:
-        prompt_tokens = [token[1:-1] for token in tokenizer(prompt, max_length=max_length, truncation=True).input_ids]
+        prompt_tokens = [token[1:-1] for token in tokenizer(
+            prompt, max_length=max_length, truncation=True).input_ids]
         prompt_weights = [[1.0] * len(token) for token in prompt_tokens]
         if uncond_prompt is not None:
             if isinstance(uncond_prompt, str):
                 uncond_prompt = [uncond_prompt]
-            uncond_tokens = [token[1:-1] for token in tokenizer(uncond_prompt, max_length=max_length, truncation=True).input_ids]
+            uncond_tokens = [token[1:-1] for token in tokenizer(
+                uncond_prompt, max_length=max_length, truncation=True).input_ids]
             uncond_weights = [[1.0] * len(token) for token in uncond_tokens]
 
     # round up the longest length of tokens to a multiple of (model_max_length - 2)
     max_length = max([len(token) for token in prompt_tokens])
     if uncond_prompt is not None:
-        max_length = max(max_length, max([len(token) for token in uncond_tokens]))
+        max_length = max(max_length, max(
+            [len(token) for token in uncond_tokens]))
 
     max_embeddings_multiples = min(
         max_embeddings_multiples,
         (max_length - 1) // (tokenizer.model_max_length - 2) + 1,
     )
     max_embeddings_multiples = max(1, max_embeddings_multiples)
-    max_length = (tokenizer.model_max_length - 2) * max_embeddings_multiples + 2
+    max_length = (tokenizer.model_max_length - 2) * \
+        max_embeddings_multiples + 2
 
     # pad the length of tokens and weights
     bos = tokenizer.bos_token_id
@@ -1212,7 +1305,8 @@ def get_weighted_text_embeddings(
         no_boseos_middle=no_boseos_middle,
         chunk_length=tokenizer.model_max_length,
     )
-    prompt_tokens = torch.tensor(prompt_tokens, dtype=torch.long, device=device)
+    prompt_tokens = torch.tensor(
+        prompt_tokens, dtype=torch.long, device=device)
     if uncond_prompt is not None:
         uncond_tokens, uncond_weights = pad_tokens_and_weights(
             uncond_tokens,
@@ -1224,7 +1318,8 @@ def get_weighted_text_embeddings(
             no_boseos_middle=no_boseos_middle,
             chunk_length=tokenizer.model_max_length,
         )
-        uncond_tokens = torch.tensor(uncond_tokens, dtype=torch.long, device=device)
+        uncond_tokens = torch.tensor(
+            uncond_tokens, dtype=torch.long, device=device)
 
     # get the embeddings
     text_embeddings, text_pool = get_unweighted_text_embeddings(
@@ -1238,7 +1333,8 @@ def get_weighted_text_embeddings(
         no_boseos_middle=no_boseos_middle,
     )
 
-    prompt_weights = torch.tensor(prompt_weights, dtype=text_embeddings.dtype, device=device)
+    prompt_weights = torch.tensor(
+        prompt_weights, dtype=text_embeddings.dtype, device=device)
     if uncond_prompt is not None:
         uncond_embeddings, uncond_pool = get_unweighted_text_embeddings(
             is_sdxl,
@@ -1250,7 +1346,8 @@ def get_weighted_text_embeddings(
             pad,
             no_boseos_middle=no_boseos_middle,
         )
-        uncond_weights = torch.tensor(uncond_weights, dtype=uncond_embeddings.dtype, device=device)
+        uncond_weights = torch.tensor(
+            uncond_weights, dtype=uncond_embeddings.dtype, device=device)
 
     # assign weights to the prompts and normalize in the sense of mean
     # TODO: should we normalize by chunk or in a whole (current implementation)?
@@ -1258,15 +1355,21 @@ def get_weighted_text_embeddings(
 
     if (not skip_parsing) and (not skip_weighting):
         if emb_normalize_mode == "abs":
-            previous_mean = text_embeddings.float().abs().mean(axis=[-2, -1]).to(text_embeddings.dtype)
+            previous_mean = text_embeddings.float().abs().mean(
+                axis=[-2, -1]).to(text_embeddings.dtype)
             text_embeddings *= prompt_weights.unsqueeze(-1)
-            current_mean = text_embeddings.float().abs().mean(axis=[-2, -1]).to(text_embeddings.dtype)
-            text_embeddings *= (previous_mean / current_mean).unsqueeze(-1).unsqueeze(-1)
+            current_mean = text_embeddings.float().abs().mean(
+                axis=[-2, -1]).to(text_embeddings.dtype)
+            text_embeddings *= (previous_mean /
+                                current_mean).unsqueeze(-1).unsqueeze(-1)
             if uncond_prompt is not None:
-                previous_mean = uncond_embeddings.float().abs().mean(axis=[-2, -1]).to(uncond_embeddings.dtype)
+                previous_mean = uncond_embeddings.float().abs().mean(
+                    axis=[-2, -1]).to(uncond_embeddings.dtype)
                 uncond_embeddings *= uncond_weights.unsqueeze(-1)
-                current_mean = uncond_embeddings.float().abs().mean(axis=[-2, -1]).to(uncond_embeddings.dtype)
-                uncond_embeddings *= (previous_mean / current_mean).unsqueeze(-1).unsqueeze(-1)
+                current_mean = uncond_embeddings.float().abs().mean(
+                    axis=[-2, -1]).to(uncond_embeddings.dtype)
+                uncond_embeddings *= (previous_mean /
+                                      current_mean).unsqueeze(-1).unsqueeze(-1)
 
         elif emb_normalize_mode == "none":
             text_embeddings *= prompt_weights.unsqueeze(-1)
@@ -1274,15 +1377,21 @@ def get_weighted_text_embeddings(
                 uncond_embeddings *= uncond_weights.unsqueeze(-1)
 
         else:  # "original"
-            previous_mean = text_embeddings.float().mean(axis=[-2, -1]).to(text_embeddings.dtype)
+            previous_mean = text_embeddings.float().mean(
+                axis=[-2, -1]).to(text_embeddings.dtype)
             text_embeddings *= prompt_weights.unsqueeze(-1)
-            current_mean = text_embeddings.float().mean(axis=[-2, -1]).to(text_embeddings.dtype)
-            text_embeddings *= (previous_mean / current_mean).unsqueeze(-1).unsqueeze(-1)
+            current_mean = text_embeddings.float().mean(
+                axis=[-2, -1]).to(text_embeddings.dtype)
+            text_embeddings *= (previous_mean /
+                                current_mean).unsqueeze(-1).unsqueeze(-1)
             if uncond_prompt is not None:
-                previous_mean = uncond_embeddings.float().mean(axis=[-2, -1]).to(uncond_embeddings.dtype)
+                previous_mean = uncond_embeddings.float().mean(
+                    axis=[-2, -1]).to(uncond_embeddings.dtype)
                 uncond_embeddings *= uncond_weights.unsqueeze(-1)
-                current_mean = uncond_embeddings.float().mean(axis=[-2, -1]).to(uncond_embeddings.dtype)
-                uncond_embeddings *= (previous_mean / current_mean).unsqueeze(-1).unsqueeze(-1)
+                current_mean = uncond_embeddings.float().mean(
+                    axis=[-2, -1]).to(uncond_embeddings.dtype)
+                uncond_embeddings *= (previous_mean /
+                                      current_mean).unsqueeze(-1).unsqueeze(-1)
 
     if uncond_prompt is not None:
         return text_embeddings, text_pool, uncond_embeddings, uncond_pool, prompt_tokens
@@ -1291,7 +1400,8 @@ def get_weighted_text_embeddings(
 
 def preprocess_image(image):
     w, h = image.size
-    w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
+    # resize to integer multiple of 32
+    w, h = map(lambda x: x - x % 32, (w, h))
     image = image.resize((w, h), resample=PIL.Image.LANCZOS)
     image = np.array(image).astype(np.float32) / 255.0
     image = image[None].transpose(0, 3, 1, 2)
@@ -1302,8 +1412,10 @@ def preprocess_image(image):
 def preprocess_mask(mask):
     mask = mask.convert("L")
     w, h = mask.size
-    w, h = map(lambda x: x - x % 32, (w, h))  # resize to integer multiple of 32
-    mask = mask.resize((w // 8, h // 8), resample=PIL.Image.BILINEAR)  # LANCZOS)
+    # resize to integer multiple of 32
+    w, h = map(lambda x: x - x % 32, (w, h))
+    mask = mask.resize(
+        (w // 8, h // 8), resample=PIL.Image.BILINEAR)  # LANCZOS)
     mask = np.array(mask).astype(np.float32) / 255.0
     mask = np.tile(mask, (4, 1, 1))
     mask = mask[None].transpose(0, 1, 2, 3)  # what does this step do?
@@ -1320,7 +1432,8 @@ def preprocess_mask(mask):
 # if the second fragment is a number or two numbers, repeat the variants in the range
 # if the third fragment is a string, use it as a separator
 
-RE_DYNAMIC_PROMPT = re.compile(r"\{((e|E)\$\$)?(([\d\-]+)\$\$)?(([^\|\}]+?)\$\$)?(.+?((\|).+?)*?)\}")
+RE_DYNAMIC_PROMPT = re.compile(
+    r"\{((e|E)\$\$)?(([\d\-]+)\$\$)?(([^\|\}]+?)\$\$)?(.+?((\|).+?)*?)\}")
 
 
 def handle_dynamic_prompt_variants(prompt, repeat_count):
@@ -1371,7 +1484,8 @@ def handle_dynamic_prompt_variants(prompt, repeat_count):
 
                 return replacer
 
-            replacers.append(make_replacer_enum(variants, count_range, separator))
+            replacers.append(make_replacer_enum(
+                variants, count_range, separator))
         else:
             # make function to choose random combinations
             def make_replacer_single(vari, cr, sep):
@@ -1382,7 +1496,8 @@ def handle_dynamic_prompt_variants(prompt, repeat_count):
 
                 return replacer
 
-            replacers.append(make_replacer_single(variants, count_range, separator))
+            replacers.append(make_replacer_single(
+                variants, count_range, separator))
 
     # make each prompt
     if not enumerating:
@@ -1404,14 +1519,16 @@ def handle_dynamic_prompt_variants(prompt, repeat_count):
                 for current in prompts:
                     replecements = replacer()
                     for replecement in replecements:
-                        new_prompts.append(current.replace(found.group(0), replecement, 1))
+                        new_prompts.append(current.replace(
+                            found.group(0), replecement, 1))
                 prompts = new_prompts
 
         for found, replacer in zip(founds, replacers):
             # make random selection for existing prompts
             if found.group(2) is None:
                 for i in range(len(prompts)):
-                    prompts[i] = prompts[i].replace(found.group(0), replacer()[0], 1)
+                    prompts[i] = prompts[i].replace(
+                        found.group(0), replacer()[0], 1)
 
     return prompts
 
@@ -1494,9 +1611,11 @@ def main(args):
     # assert not highres_fix or args.image_path is None, f"highres_fix doesn't work with img2img / highres_fixはimg2imgと同時に使えません"
 
     if args.v_parameterization and not args.v2:
-        logger.warning("v_parameterization should be with v2 / v1でv_parameterizationを使用することは想定されていません")
+        logger.warning(
+            "v_parameterization should be with v2 / v1でv_parameterizationを使用することは想定されていません")
     if args.v2 and args.clip_skip is not None:
-        logger.warning("v2 with clip_skip will be unexpected / v2でclip_skipを使用することは想定されていません")
+        logger.warning(
+            "v2 with clip_skip will be unexpected / v2でclip_skipを使用することは想定されていません")
 
     # モデルを読み込む
     if not os.path.exists(args.ckpt):  # ファイルがないならパターンで探し、一つだけ該当すればそれを使う
@@ -1504,8 +1623,10 @@ def main(args):
         if len(files) == 1:
             args.ckpt = files[0]
 
-    name_or_path = os.readlink(args.ckpt) if os.path.islink(args.ckpt) else args.ckpt
-    use_stable_diffusion_format = os.path.isfile(name_or_path)  # determine SD or Diffusers
+    name_or_path = os.readlink(args.ckpt) if os.path.islink(
+        args.ckpt) else args.ckpt
+    use_stable_diffusion_format = os.path.isfile(
+        name_or_path)  # determine SD or Diffusers
 
     # SDXLかどうかを判定する
     is_sdxl = args.sdxl
@@ -1515,7 +1636,8 @@ def main(args):
             is_sdxl = os.path.getsize(name_or_path) > 5.5 * 1024**3
         else:
             # if `text_encoder_2` subdirectory exists, sdxl
-            is_sdxl = os.path.isdir(os.path.join(name_or_path, "text_encoder_2"))
+            is_sdxl = os.path.isdir(os.path.join(
+                name_or_path, "text_encoder_2"))
     logger.info(f"SDXL: {is_sdxl}")
 
     if is_sdxl:
@@ -1525,7 +1647,8 @@ def main(args):
         (_, text_encoder1, text_encoder2, vae, unet, _, _) = sdxl_train_util._load_target_model(
             args.ckpt, args.vae, sdxl_model_util.MODEL_VERSION_SDXL_BASE_V1_0, dtype
         )
-        unet: InferSdxlUNet2DConditionModel = InferSdxlUNet2DConditionModel(unet)
+        unet: InferSdxlUNet2DConditionModel = InferSdxlUNet2DConditionModel(
+            unet)
         text_encoders = [text_encoder1, text_encoder2]
     else:
         if args.clip_skip is None:
@@ -1533,10 +1656,12 @@ def main(args):
 
         if use_stable_diffusion_format:
             logger.info("load StableDiffusion checkpoint")
-            text_encoder, vae, unet = model_util.load_models_from_stable_diffusion_checkpoint(args.v2, args.ckpt)
+            text_encoder, vae, unet = model_util.load_models_from_stable_diffusion_checkpoint(
+                args.v2, args.ckpt)
         else:
             logger.info("load Diffusers pretrained models")
-            loading_pipe = StableDiffusionPipeline.from_pretrained(args.ckpt, safety_checker=None, torch_dtype=dtype)
+            loading_pipe = StableDiffusionPipeline.from_pretrained(
+                args.ckpt, safety_checker=None, torch_dtype=dtype)
             text_encoder = loading_pipe.text_encoder
             vae = loading_pipe.vae
             unet = loading_pipe.unet
@@ -1660,8 +1785,10 @@ def main(args):
                 noise = None
 
             if noise == None:
-                logger.warning(f"unexpected noise request: {self.sampler_noise_index}, {shape}")
-                noise = torch.randn(shape, dtype=dtype, device=device, generator=generator)
+                logger.warning(
+                    f"unexpected noise request: {self.sampler_noise_index}, {shape}")
+                noise = torch.randn(shape, dtype=dtype,
+                                    device=device, generator=generator)
 
             self.sampler_noise_index += 1
             return noise
@@ -1675,7 +1802,8 @@ def main(args):
                 return self.noise_manager.randn
             if hasattr(torch, item):
                 return getattr(torch, item)
-            raise AttributeError("'{}' object has no attribute '{}'".format(type(self).__name__, item))
+            raise AttributeError(
+                "'{}' object has no attribute '{}'".format(type(self).__name__, item))
 
     noise_manager = NoiseManager()
     if scheduler_module is not None:
@@ -1696,7 +1824,8 @@ def main(args):
     #     scheduler.config.clip_sample = True
 
     # deviceを決定する
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # "mps"を考量してない
+    device = torch.device("cuda" if torch.cuda.is_available()
+                          else "cpu")  # "mps"を考量してない
 
     # custom pipelineをコピったやつを生成する
     if args.vae_slices:
@@ -1705,14 +1834,16 @@ def main(args):
         sli_vae = SlicingAutoencoderKL(
             act_fn="silu",
             block_out_channels=(128, 256, 512, 512),
-            down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D", "DownEncoderBlock2D"],
+            down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D",
+                              "DownEncoderBlock2D", "DownEncoderBlock2D"],
             in_channels=3,
             latent_channels=4,
             layers_per_block=2,
             norm_num_groups=32,
             out_channels=3,
             sample_size=512,
-            up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D", "UpDecoderBlock2D"],
+            up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D",
+                            "UpDecoderBlock2D", "UpDecoderBlock2D"],
             num_slices=args.vae_slices,
         )
         sli_vae.load_state_dict(vae.state_dict())  # vaeのパラメータをコピーする
@@ -1751,7 +1882,8 @@ def main(args):
             logger.info("import network module: {network_module}")
             imported_module = importlib.import_module(network_module)
 
-            network_mul = 1.0 if args.network_mul is None or len(args.network_mul) <= i else args.network_mul[i]
+            network_mul = 1.0 if args.network_mul is None or len(
+                args.network_mul) <= i else args.network_mul[i]
 
             net_kwargs = {}
             if args.network_args and i < len(args.network_args):
@@ -1784,12 +1916,14 @@ def main(args):
 
             mergeable = network.is_mergeable()
             if network_merge and not mergeable:
-                logger.warning("network is not mergiable. ignore merge option.")
+                logger.warning(
+                    "network is not mergiable. ignore merge option.")
 
             if not mergeable or i >= network_merge:
                 # not merging
                 network.apply_to(text_encoders, unet)
-                info = network.load_state_dict(weights_sd, False)  # network.load_weightsを使うようにするとよい
+                # network.load_weightsを使うようにするとよい
+                info = network.load_state_dict(weights_sd, False)
                 logger.info(f"weights are loaded: {info}")
 
                 if args.opt_channels_last:
@@ -1803,7 +1937,8 @@ def main(args):
                 networks.append(network)
                 network_default_muls.append(network_mul)
             else:
-                network.merge_to(text_encoders, unet, weights_sd, dtype, device)
+                network.merge_to(text_encoders, unet,
+                                 weights_sd, dtype, device)
 
     else:
         networks = []
@@ -1828,13 +1963,18 @@ def main(args):
     control_nets: List[ControlNetInfo] = []
     if args.control_net_models:
         for i, model in enumerate(args.control_net_models):
-            prep_type = None if not args.control_net_preps or len(args.control_net_preps) <= i else args.control_net_preps[i]
-            weight = 1.0 if not args.control_net_weights or len(args.control_net_weights) <= i else args.control_net_weights[i]
-            ratio = 1.0 if not args.control_net_ratios or len(args.control_net_ratios) <= i else args.control_net_ratios[i]
+            prep_type = None if not args.control_net_preps or len(
+                args.control_net_preps) <= i else args.control_net_preps[i]
+            weight = 1.0 if not args.control_net_weights or len(
+                args.control_net_weights) <= i else args.control_net_weights[i]
+            ratio = 1.0 if not args.control_net_ratios or len(
+                args.control_net_ratios) <= i else args.control_net_ratios[i]
 
-            ctrl_unet, ctrl_net = original_control_net.load_control_net(args.v2, unet, model)
+            ctrl_unet, ctrl_net = original_control_net.load_control_net(
+                args.v2, unet, model)
             prep = original_control_net.load_preprocess(prep_type)
-            control_nets.append(ControlNetInfo(ctrl_unet, ctrl_net, prep, weight, ratio))
+            control_nets.append(ControlNetInfo(
+                ctrl_unet, ctrl_net, prep, weight, ratio))
 
     control_net_lllites: List[Tuple[ControlNetLLLite, float]] = []
     if args.control_net_lllite_models:
@@ -1860,9 +2000,11 @@ def main(args):
                 if not args.control_net_multipliers or len(args.control_net_multipliers) <= i
                 else args.control_net_multipliers[i]
             )
-            ratio = 1.0 if not args.control_net_ratios or len(args.control_net_ratios) <= i else args.control_net_ratios[i]
+            ratio = 1.0 if not args.control_net_ratios or len(
+                args.control_net_ratios) <= i else args.control_net_ratios[i]
 
-            control_net_lllite = ControlNetLLLite(unet, cond_emb_dim, mlp_dim, multiplier=multiplier)
+            control_net_lllite = ControlNetLLLite(
+                unet, cond_emb_dim, mlp_dim, multiplier=multiplier)
             control_net_lllite.apply_to()
             control_net_lllite.load_state_dict(state_dict)
             control_net_lllite.to(dtype).to(device)
@@ -1907,14 +2049,16 @@ def main(args):
 
     # Deep Shrink
     if args.ds_depth_1 is not None:
-        unet.set_deep_shrink(args.ds_depth_1, args.ds_timesteps_1, args.ds_depth_2, args.ds_timesteps_2, args.ds_ratio)
+        unet.set_deep_shrink(args.ds_depth_1, args.ds_timesteps_1,
+                             args.ds_depth_2, args.ds_timesteps_2, args.ds_ratio)
 
     # Gradual Latent
     if args.gradual_latent_timesteps is not None:
         if args.gradual_latent_unsharp_params:
             us_params = args.gradual_latent_unsharp_params.split(",")
             us_ksize, us_sigma, us_strength = [float(v) for v in us_params[:3]]
-            us_target_x = True if len(us_params) <= 3 else bool(int(us_params[3]))
+            us_target_x = True if len(
+                us_params) <= 3 else bool(int(us_params[3]))
             us_ksize = int(us_ksize)
         else:
             us_ksize, us_sigma, us_strength, us_target_x = None, None, None, None
@@ -1957,11 +2101,13 @@ def main(args):
             num_vectors_per_token = embeds1.size()[0]
             token_string = os.path.splitext(os.path.basename(embeds_file))[0]
 
-            token_strings = [token_string] + [f"{token_string}{i+1}" for i in range(num_vectors_per_token - 1)]
+            token_strings = [
+                token_string] + [f"{token_string}{i+1}" for i in range(num_vectors_per_token - 1)]
 
             # add new word to tokenizer, count is num_vectors_per_token
             num_added_tokens1 = tokenizers[0].add_tokens(token_strings)
-            num_added_tokens2 = tokenizers[1].add_tokens(token_strings) if is_sdxl else 0
+            num_added_tokens2 = tokenizers[1].add_tokens(
+                token_strings) if is_sdxl else 0
             assert num_added_tokens1 == num_vectors_per_token and (
                 num_added_tokens2 == 0 or num_added_tokens2 == num_vectors_per_token
             ), (
@@ -1970,21 +2116,27 @@ def main(args):
             )
 
             token_ids1 = tokenizers[0].convert_tokens_to_ids(token_strings)
-            token_ids2 = tokenizers[1].convert_tokens_to_ids(token_strings) if is_sdxl else None
-            logger.info(f"Textual Inversion embeddings `{token_string}` loaded. Tokens are added: {token_ids1} and {token_ids2}")
+            token_ids2 = tokenizers[1].convert_tokens_to_ids(
+                token_strings) if is_sdxl else None
+            logger.info(
+                f"Textual Inversion embeddings `{token_string}` loaded. Tokens are added: {token_ids1} and {token_ids2}")
             assert (
-                min(token_ids1) == token_ids1[0] and token_ids1[-1] == token_ids1[0] + len(token_ids1) - 1
+                min(token_ids1) == token_ids1[0] and token_ids1[-1] == token_ids1[0] + len(
+                    token_ids1) - 1
             ), f"token ids1 is not ordered"
             assert not is_sdxl or (
-                min(token_ids2) == token_ids2[0] and token_ids2[-1] == token_ids2[0] + len(token_ids2) - 1
+                min(token_ids2) == token_ids2[0] and token_ids2[-1] == token_ids2[0] + len(
+                    token_ids2) - 1
             ), f"token ids2 is not ordered"
-            assert len(tokenizers[0]) - 1 == token_ids1[-1], f"token ids 1 is not end of tokenize: {len(tokenizers[0])}"
+            assert len(
+                tokenizers[0]) - 1 == token_ids1[-1], f"token ids 1 is not end of tokenize: {len(tokenizers[0])}"
             assert (
                 not is_sdxl or len(tokenizers[1]) - 1 == token_ids2[-1]
             ), f"token ids 2 is not end of tokenize: {len(tokenizers[1])}"
 
             if num_vectors_per_token > 1:
-                pipe.add_token_replacement(0, token_ids1[0], token_ids1)  # hoge -> hoge, hogea, hogeb, ...
+                # hoge -> hoge, hogea, hogeb, ...
+                pipe.add_token_replacement(0, token_ids1[0], token_ids1)
                 if is_sdxl:
                     pipe.add_token_replacement(1, token_ids2[0], token_ids2)
 
@@ -2011,22 +2163,26 @@ def main(args):
         logger.info(f"reading prompts from {args.from_file}")
         with open(args.from_file, "r", encoding="utf-8") as f:
             prompt_list = f.read().splitlines()
-            prompt_list = [d for d in prompt_list if len(d.strip()) > 0 and d[0] != "#"]
+            prompt_list = [d for d in prompt_list if len(
+                d.strip()) > 0 and d[0] != "#"]
         prompter = ListPrompter(prompt_list)
 
     elif args.from_module is not None:
 
         def load_module_from_path(module_name, file_path):
-            spec = importlib.util.spec_from_file_location(module_name, file_path)
+            spec = importlib.util.spec_from_file_location(
+                module_name, file_path)
             if spec is None:
-                raise ImportError(f"Module '{module_name}' cannot be loaded from '{file_path}'")
+                raise ImportError(
+                    f"Module '{module_name}' cannot be loaded from '{file_path}'")
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
             return module
 
         logger.info(f"reading prompts from module: {args.from_module}")
-        prompt_module = load_module_from_path("prompt_module", args.from_module)
+        prompt_module = load_module_from_path(
+            "prompt_module", args.from_module)
 
         prompter = prompt_module.get_prompter(args, pipe, networks)
 
@@ -2080,7 +2236,8 @@ def main(args):
         # CLIP Vision
         if args.clip_vision_strength is not None:
             logger.info(f"load CLIP Vision model: {CLIP_VISION_MODEL}")
-            vision_model = CLIPVisionModelWithProjection.from_pretrained(CLIP_VISION_MODEL, projection_dim=1280)
+            vision_model = CLIPVisionModelWithProjection.from_pretrained(
+                CLIP_VISION_MODEL, projection_dim=1280)
             vision_model.to(device, dtype)
             processor = CLIPImageProcessor.from_pretrained(CLIP_VISION_MODEL)
 
@@ -2095,7 +2252,8 @@ def main(args):
     if args.mask_path is not None:
         logger.info(f"load mask for inpainting: {args.mask_path}")
         mask_images = load_images(args.mask_path)
-        assert len(mask_images) > 0, f"No mask image / マスク画像がありません: {args.image_path}"
+        assert len(
+            mask_images) > 0, f"No mask image / マスク画像がありません: {args.image_path}"
         logger.info(f"loaded {len(mask_images)} mask images for inpainting")
     else:
         mask_images = None
@@ -2155,7 +2313,8 @@ def main(args):
                     ch0 = (i + 1) & 1
                     ch1 = ((i + 1) >> 1) & 1
                     ch2 = ((i + 1) >> 2) & 1
-                    np_mask = np.all(np_mask == np.array([ch0, ch1, ch2]) * 255, axis=2)
+                    np_mask = np.all(np_mask == np.array(
+                        [ch0, ch1, ch2]) * 255, axis=2)
                     np_mask = np_mask.astype(np.uint8) * 255
                 else:
                     np_mask = np_mask[:, :, i]
@@ -2168,7 +2327,8 @@ def main(args):
 
     prev_image = None  # for VGG16 guided
     if args.guide_image_path is not None:
-        logger.info(f"load image for ControlNet guidance: {args.guide_image_path}")
+        logger.info(
+            f"load image for ControlNet guidance: {args.guide_image_path}")
         guide_images = []
         for p in args.guide_image_path:
             guide_images.extend(load_images(p))
@@ -2223,7 +2383,8 @@ def main(args):
             # highres_fixの処理
             if highres_fix and not highres_1st:
                 # 1st stageのバッチを作成して呼び出す：サイズを小さくして呼び出す
-                is_1st_latent = upscaler.support_latents() if upscaler else args.highres_fix_latents_upscaling
+                is_1st_latent = upscaler.support_latents(
+                ) if upscaler else args.highres_fix_latents_upscaling
 
                 logger.info("process 1st stage")
                 batch_1st = []
@@ -2241,8 +2402,10 @@ def main(args):
 
                     original_width_1st = scale_and_round(ext.original_width)
                     original_height_1st = scale_and_round(ext.original_height)
-                    original_width_negative_1st = scale_and_round(ext.original_width_negative)
-                    original_height_negative_1st = scale_and_round(ext.original_height_negative)
+                    original_width_negative_1st = scale_and_round(
+                        ext.original_width_negative)
+                    original_height_negative_1st = scale_and_round(
+                        ext.original_height_negative)
                     crop_left_1st = scale_and_round(ext.crop_left)
                     crop_top_1st = scale_and_round(ext.crop_top)
 
@@ -2266,7 +2429,8 @@ def main(args):
                     )
                     batch_1st.append(BatchData(is_1st_latent, base, ext_1st))
 
-                pipe.set_enable_control_net(True)  # 1st stageではControlNetを有効にする
+                # 1st stageではControlNetを有効にする
+                pipe.set_enable_control_net(True)
                 images_1st = process_batch(batch_1st, True, True)
 
                 # 2nd stageのバッチを作成して以下処理する
@@ -2294,7 +2458,8 @@ def main(args):
                     # latentを拡大する
                     org_dtype = images_1st.dtype
                     if images_1st.dtype == torch.bfloat16:
-                        images_1st = images_1st.to(torch.float)  # interpolateがbf16をサポートしていない
+                        # interpolateがbf16をサポートしていない
+                        images_1st = images_1st.to(torch.float)
                     images_1st = torch.nn.functional.interpolate(
                         images_1st, (batch[0].ext.height // 8, batch[0].ext.width // 8), mode="bilinear"
                     )  # , antialias=True)
@@ -2302,16 +2467,19 @@ def main(args):
 
                 else:
                     # 画像をLANCZOSで拡大する
-                    images_1st = [image.resize((width_2nd, height_2nd), resample=PIL.Image.LANCZOS) for image in images_1st]
+                    images_1st = [image.resize(
+                        (width_2nd, height_2nd), resample=PIL.Image.LANCZOS) for image in images_1st]
 
                 batch_2nd = []
                 for i, (bd, image) in enumerate(zip(batch, images_1st)):
-                    bd_2nd = BatchData(False, BatchDataBase(*bd.base[0:3], bd.base.seed + 1, image, None, *bd.base[6:]), bd.ext)
+                    bd_2nd = BatchData(False, BatchDataBase(
+                        *bd.base[0:3], bd.base.seed + 1, image, None, *bd.base[6:]), bd.ext)
                     batch_2nd.append(bd_2nd)
                 batch = batch_2nd
 
                 if args.highres_fix_disable_control_net:
-                    pipe.set_enable_control_net(False)  # オプション指定時、2nd stageではControlNetを無効にする
+                    # オプション指定時、2nd stageではControlNetを無効にする
+                    pipe.set_enable_control_net(False)
 
             # このバッチの情報を取り出す
             (
@@ -2334,21 +2502,25 @@ def main(args):
                     num_sub_prompts,
                 ),
             ) = batch[0]
-            noise_shape = (LATENT_CHANNELS, height // DOWNSAMPLING_FACTOR, width // DOWNSAMPLING_FACTOR)
+            noise_shape = (LATENT_CHANNELS, height //
+                           DOWNSAMPLING_FACTOR, width // DOWNSAMPLING_FACTOR)
 
             prompts = []
             negative_prompts = []
             raw_prompts = []
-            start_code = torch.zeros((batch_size, *noise_shape), device=device, dtype=dtype)
+            start_code = torch.zeros(
+                (batch_size, *noise_shape), device=device, dtype=dtype)
             noises = [
-                torch.zeros((batch_size, *noise_shape), device=device, dtype=dtype)
+                torch.zeros((batch_size, *noise_shape),
+                            device=device, dtype=dtype)
                 for _ in range(steps * scheduler_num_noises_per_step)
             ]
             seeds = []
             clip_prompts = []
 
             if init_image is not None:  # img2img?
-                i2i_noises = torch.zeros((batch_size, *noise_shape), device=device, dtype=dtype)
+                i2i_noises = torch.zeros(
+                    (batch_size, *noise_shape), device=device, dtype=dtype)
                 init_images = []
 
                 if mask_image is not None:
@@ -2371,7 +2543,8 @@ def main(args):
             all_guide_images_are_same = True
             for i, (
                 _,
-                (_, prompt, negative_prompt, seed, init_image, mask_image, clip_prompt, guide_image, raw_prompt),
+                (_, prompt, negative_prompt, seed, init_image,
+                 mask_image, clip_prompt, guide_image, raw_prompt),
                 _,
             ) in enumerate(batch):
                 prompts.append(prompt)
@@ -2401,14 +2574,17 @@ def main(args):
 
                 # make start code
                 torch.manual_seed(seed)
-                start_code[i] = torch.randn(noise_shape, device=device, dtype=dtype)
+                start_code[i] = torch.randn(
+                    noise_shape, device=device, dtype=dtype)
 
                 # make each noises
                 for j in range(steps * scheduler_num_noises_per_step):
-                    noises[j][i] = torch.randn(noise_shape, device=device, dtype=dtype)
+                    noises[j][i] = torch.randn(
+                        noise_shape, device=device, dtype=dtype)
 
                 if i2i_noises is not None:  # img2img noise
-                    i2i_noises[i] = torch.randn(noise_shape, device=device, dtype=dtype)
+                    i2i_noises[i] = torch.randn(
+                        noise_shape, device=device, dtype=dtype)
 
             noise_manager.reset_sampler_noises(noises)
 
@@ -2423,8 +2599,10 @@ def main(args):
             # ControlNet使用時はguide imageをリサイズする
             if control_nets or control_net_lllites:
                 # TODO resampleのメソッド
-                guide_images = guide_images if type(guide_images) == list else [guide_images]
-                guide_images = [i.resize((width, height), resample=PIL.Image.LANCZOS) for i in guide_images]
+                guide_images = guide_images if type(
+                    guide_images) == list else [guide_images]
+                guide_images = [
+                    i.resize((width, height), resample=PIL.Image.LANCZOS) for i in guide_images]
                 if len(guide_images) == 1:
                     guide_images = guide_images[0]
 
@@ -2436,7 +2614,8 @@ def main(args):
                     n.set_multiplier(m)
                     if regional_network:
                         # TODO バッチから ds_ratio を取り出すべき
-                        n.set_current_generation(batch_size, num_sub_prompts, width, height, shared, unet.ds_ratio)
+                        n.set_current_generation(
+                            batch_size, num_sub_prompts, width, height, shared, unet.ds_ratio)
 
                 if not regional_network and network_pre_calc:
                     for n in networks:
@@ -2476,10 +2655,12 @@ def main(args):
                 return images
 
             # save image
-            highres_prefix = ("0" if highres_1st else "1") if highres_fix else ""
+            highres_prefix = (
+                "0" if highres_1st else "1") if highres_fix else ""
             ts_str = time.strftime("%Y%m%d%H%M%S", time.localtime())
             for i, (image, prompt, negative_prompts, seed, clip_prompt, raw_prompt) in enumerate(
-                zip(images, prompts, negative_prompts, seeds, clip_prompts, raw_prompts)
+                zip(images, prompts, negative_prompts,
+                    seeds, clip_prompts, raw_prompts)
             ):
                 if highres_fix:
                     seed -= 1  # record original seed
@@ -2500,16 +2681,20 @@ def main(args):
                 if is_sdxl:
                     metadata.add_text("original-height", str(original_height))
                     metadata.add_text("original-width", str(original_width))
-                    metadata.add_text("original-height-negative", str(original_height_negative))
-                    metadata.add_text("original-width-negative", str(original_width_negative))
+                    metadata.add_text("original-height-negative",
+                                      str(original_height_negative))
+                    metadata.add_text("original-width-negative",
+                                      str(original_width_negative))
                     metadata.add_text("crop-top", str(crop_top))
                     metadata.add_text("crop-left", str(crop_left))
 
                 if args.use_original_file_name and init_images is not None:
                     if type(init_images) is list:
-                        fln = os.path.splitext(os.path.basename(init_images[i % len(init_images)].filename))[0] + ".png"
+                        fln = os.path.splitext(os.path.basename(
+                            init_images[i % len(init_images)].filename))[0] + ".png"
                     else:
-                        fln = os.path.splitext(os.path.basename(init_images.filename))[0] + ".png"
+                        fln = os.path.splitext(os.path.basename(
+                            init_images.filename))[0] + ".png"
                 elif args.sequential_file_name:
                     fln = f"im_{highres_prefix}{step_first + i + 1:06d}.png"
                 else:
@@ -2522,7 +2707,8 @@ def main(args):
                     import cv2
 
                     for prompt, image in zip(prompts, images):
-                        cv2.imshow(prompt[:128], np.array(image)[:, :, ::-1])  # プロンプトが長いと死ぬ
+                        cv2.imshow(prompt[:128], np.array(image)[
+                                   :, :, ::-1])  # プロンプトが長いと死ぬ
                         cv2.waitKey()
                         cv2.destroyAllWindows()
                 except ImportError:
@@ -2551,17 +2737,20 @@ def main(args):
                 if not valid:  # EOF, end app
                     break
             else:
-                raw_prompt = prompter(args, pipe, seed_random, iter_seed, prompt_index, global_step)
+                raw_prompt = prompter(
+                    args, pipe, seed_random, iter_seed, prompt_index, global_step)
                 if raw_prompt is None:
                     break
 
             # sd-dynamic-prompts like variants:
             # count is 1 (not dynamic) or images_per_prompt (no enumeration) or arbitrary (enumeration)
-            raw_prompts = handle_dynamic_prompt_variants(raw_prompt, args.images_per_prompt)
+            raw_prompts = handle_dynamic_prompt_variants(
+                raw_prompt, args.images_per_prompt)
 
             # repeat prompt
             for pi in range(args.images_per_prompt if len(raw_prompts) == 1 else len(raw_prompts)):
-                raw_prompt = raw_prompts[pi] if len(raw_prompts) > 1 else raw_prompts[0]
+                raw_prompt = raw_prompts[pi] if len(
+                    raw_prompts) > 1 else raw_prompts[0]
 
                 if pi == 0 or len(raw_prompts) > 1:
                     # parse prompt: if prompt is not changed, skip parsing
@@ -2600,7 +2789,8 @@ def main(args):
 
                     prompt_args = raw_prompt.strip().split(" --")
                     prompt = prompt_args[0]
-                    length = len(prompter) if hasattr(prompter, "__len__") else 0
+                    length = len(prompter) if hasattr(
+                        prompter, "__len__") else 0
                     logger.info(f"prompt {prompt_index+1}/{length}: {prompt}")
 
                     for parg in prompt_args[1:]:
@@ -2620,25 +2810,29 @@ def main(args):
                             m = re.match(r"ow (\d+)", parg, re.IGNORECASE)
                             if m:
                                 original_width = int(m.group(1))
-                                logger.info(f"original width: {original_width}")
+                                logger.info(
+                                    f"original width: {original_width}")
                                 continue
 
                             m = re.match(r"oh (\d+)", parg, re.IGNORECASE)
                             if m:
                                 original_height = int(m.group(1))
-                                logger.info(f"original height: {original_height}")
+                                logger.info(
+                                    f"original height: {original_height}")
                                 continue
 
                             m = re.match(r"nw (\d+)", parg, re.IGNORECASE)
                             if m:
                                 original_width_negative = int(m.group(1))
-                                logger.info(f"original width negative: {original_width_negative}")
+                                logger.info(
+                                    f"original width negative: {original_width_negative}")
                                 continue
 
                             m = re.match(r"nh (\d+)", parg, re.IGNORECASE)
                             if m:
                                 original_height_negative = int(m.group(1))
-                                logger.info(f"original height negative: {original_height_negative}")
+                                logger.info(
+                                    f"original height negative: {original_height_negative}")
                                 continue
 
                             m = re.match(r"ct (\d+)", parg, re.IGNORECASE)
@@ -2671,13 +2865,15 @@ def main(args):
                                 logger.info(f"scale: {scale}")
                                 continue
 
-                            m = re.match(r"nl ([\d\.]+|none|None)", parg, re.IGNORECASE)
+                            m = re.match(
+                                r"nl ([\d\.]+|none|None)", parg, re.IGNORECASE)
                             if m:  # negative scale
                                 if m.group(1).lower() == "none":
                                     negative_scale = None
                                 else:
                                     negative_scale = float(m.group(1))
-                                logger.info(f"negative scale: {negative_scale}")
+                                logger.info(
+                                    f"negative scale: {negative_scale}")
                                 continue
 
                             m = re.match(r"t ([\d\.]+)", parg, re.IGNORECASE)
@@ -2689,7 +2885,8 @@ def main(args):
                             m = re.match(r"n (.+)", parg, re.IGNORECASE)
                             if m:  # negative prompt
                                 negative_prompt = m.group(1)
-                                logger.info(f"negative prompt: {negative_prompt}")
+                                logger.info(
+                                    f"negative prompt: {negative_prompt}")
                                 continue
 
                             m = re.match(r"c (.+)", parg, re.IGNORECASE)
@@ -2698,40 +2895,50 @@ def main(args):
                                 logger.info(f"clip prompt: {clip_prompt}")
                                 continue
 
-                            m = re.match(r"am ([\d\.\-,]+)", parg, re.IGNORECASE)
+                            m = re.match(r"am ([\d\.\-,]+)",
+                                         parg, re.IGNORECASE)
                             if m:  # network multiplies
-                                network_muls = [float(v) for v in m.group(1).split(",")]
+                                network_muls = [float(v)
+                                                for v in m.group(1).split(",")]
                                 while len(network_muls) < len(networks):
                                     network_muls.append(network_muls[-1])
                                 logger.info(f"network mul: {network_muls}")
                                 continue
 
                             # Deep Shrink
-                            m = re.match(r"dsd1 ([\d\.]+)", parg, re.IGNORECASE)
+                            m = re.match(
+                                r"dsd1 ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # deep shrink depth 1
                                 ds_depth_1 = int(m.group(1))
-                                logger.info(f"deep shrink depth 1: {ds_depth_1}")
+                                logger.info(
+                                    f"deep shrink depth 1: {ds_depth_1}")
                                 continue
 
-                            m = re.match(r"dst1 ([\d\.]+)", parg, re.IGNORECASE)
+                            m = re.match(
+                                r"dst1 ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # deep shrink timesteps 1
                                 ds_timesteps_1 = int(m.group(1))
                                 ds_depth_1 = ds_depth_1 if ds_depth_1 is not None else -1  # -1 means override
-                                logger.info(f"deep shrink timesteps 1: {ds_timesteps_1}")
+                                logger.info(
+                                    f"deep shrink timesteps 1: {ds_timesteps_1}")
                                 continue
 
-                            m = re.match(r"dsd2 ([\d\.]+)", parg, re.IGNORECASE)
+                            m = re.match(
+                                r"dsd2 ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # deep shrink depth 2
                                 ds_depth_2 = int(m.group(1))
                                 ds_depth_1 = ds_depth_1 if ds_depth_1 is not None else -1  # -1 means override
-                                logger.info(f"deep shrink depth 2: {ds_depth_2}")
+                                logger.info(
+                                    f"deep shrink depth 2: {ds_depth_2}")
                                 continue
 
-                            m = re.match(r"dst2 ([\d\.]+)", parg, re.IGNORECASE)
+                            m = re.match(
+                                r"dst2 ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # deep shrink timesteps 2
                                 ds_timesteps_2 = int(m.group(1))
                                 ds_depth_1 = ds_depth_1 if ds_depth_1 is not None else -1  # -1 means override
-                                logger.info(f"deep shrink timesteps 2: {ds_timesteps_2}")
+                                logger.info(
+                                    f"deep shrink timesteps 2: {ds_timesteps_2}")
                                 continue
 
                             m = re.match(r"dsr ([\d\.]+)", parg, re.IGNORECASE)
@@ -2745,53 +2952,63 @@ def main(args):
                             m = re.match(r"glt ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # gradual latent timesteps
                                 gl_timesteps = int(m.group(1))
-                                logger.info(f"gradual latent timesteps: {gl_timesteps}")
+                                logger.info(
+                                    f"gradual latent timesteps: {gl_timesteps}")
                                 continue
 
                             m = re.match(r"glr ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # gradual latent ratio
                                 gl_ratio = float(m.group(1))
                                 gl_timesteps = gl_timesteps if gl_timesteps is not None else -1  # -1 means override
-                                logger.info(f"gradual latent ratio: {ds_ratio}")
+                                logger.info(
+                                    f"gradual latent ratio: {ds_ratio}")
                                 continue
 
                             m = re.match(r"gle ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # gradual latent every n steps
                                 gl_every_n_steps = int(m.group(1))
                                 gl_timesteps = gl_timesteps if gl_timesteps is not None else -1  # -1 means override
-                                logger.info(f"gradual latent every n steps: {gl_every_n_steps}")
+                                logger.info(
+                                    f"gradual latent every n steps: {gl_every_n_steps}")
                                 continue
 
                             m = re.match(r"gls ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # gradual latent ratio step
                                 gl_ratio_step = float(m.group(1))
                                 gl_timesteps = gl_timesteps if gl_timesteps is not None else -1  # -1 means override
-                                logger.info(f"gradual latent ratio step: {gl_ratio_step}")
+                                logger.info(
+                                    f"gradual latent ratio step: {gl_ratio_step}")
                                 continue
 
-                            m = re.match(r"glsn ([\d\.]+)", parg, re.IGNORECASE)
+                            m = re.match(
+                                r"glsn ([\d\.]+)", parg, re.IGNORECASE)
                             if m:  # gradual latent s noise
                                 gl_s_noise = float(m.group(1))
                                 gl_timesteps = gl_timesteps if gl_timesteps is not None else -1  # -1 means override
-                                logger.info(f"gradual latent s noise: {gl_s_noise}")
+                                logger.info(
+                                    f"gradual latent s noise: {gl_s_noise}")
                                 continue
 
-                            m = re.match(r"glus ([\d\.\-,]+)", parg, re.IGNORECASE)
+                            m = re.match(
+                                r"glus ([\d\.\-,]+)", parg, re.IGNORECASE)
                             if m:  # gradual latent unsharp params
                                 gl_unsharp_params = m.group(1)
                                 gl_timesteps = gl_timesteps if gl_timesteps is not None else -1  # -1 means override
-                                logger.info(f"gradual latent unsharp params: {gl_unsharp_params}")
+                                logger.info(
+                                    f"gradual latent unsharp params: {gl_unsharp_params}")
                                 continue
 
                         except ValueError as ex:
-                            logger.error(f"Exception in parsing / 解析エラー: {parg}")
+                            logger.error(
+                                f"Exception in parsing / 解析エラー: {parg}")
                             logger.error(f"{ex}")
 
                 # override Deep Shrink
                 if ds_depth_1 is not None:
                     if ds_depth_1 < 0:
                         ds_depth_1 = args.ds_depth_1 or 3
-                    unet.set_deep_shrink(ds_depth_1, ds_timesteps_1, ds_depth_2, ds_timesteps_2, ds_ratio)
+                    unet.set_deep_shrink(
+                        ds_depth_1, ds_timesteps_1, ds_depth_2, ds_timesteps_2, ds_ratio)
 
                 # override Gradual Latent
                 if gl_timesteps is not None:
@@ -2799,8 +3016,10 @@ def main(args):
                         gl_timesteps = args.gradual_latent_timesteps or 650
                     if gl_unsharp_params is not None:
                         unsharp_params = gl_unsharp_params.split(",")
-                        us_ksize, us_sigma, us_strength = [float(v) for v in unsharp_params[:3]]
-                        us_target_x = True if len(unsharp_params) < 4 else bool(int(unsharp_params[3]))
+                        us_ksize, us_sigma, us_strength = [
+                            float(v) for v in unsharp_params[:3]]
+                        us_target_x = True if len(unsharp_params) < 4 else bool(
+                            int(unsharp_params[3]))
                         us_ksize = int(us_ksize)
                     else:
                         us_ksize, us_sigma, us_strength, us_target_x = None, None, None, None
@@ -2858,9 +3077,10 @@ def main(args):
                     if control_nets or control_net_lllites:  # 複数件の場合あり
                         c = max(len(control_nets), len(control_net_lllites))
                         p = global_step % (len(guide_images) // c)
-                        guide_image = guide_images[p * c : p * c + c]
+                        guide_image = guide_images[p * c: p * c + c]
                     else:
-                        guide_image = guide_images[global_step % len(guide_images)]
+                        guide_image = guide_images[global_step % len(
+                            guide_images)]
 
                 if regional_network:
                     num_sub_prompts = len(prompt.split(" AND "))
@@ -2892,7 +3112,8 @@ def main(args):
                         num_sub_prompts,
                     ),
                 )
-                if len(batch_data) > 0 and batch_data[-1].ext != b1.ext:  # バッチ分割必要？
+                # バッチ分割必要？
+                if len(batch_data) > 0 and batch_data[-1].ext != b1.ext:
                     process_batch(batch_data, highres_fix)
                     batch_data.clear()
 
@@ -2916,74 +3137,82 @@ def setup_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
     add_logging_arguments(parser)
-    
+
     parser.add_argument(
-        "--sdxl", action="store_true", help="load Stable Diffusion XL model / Stable Diffusion XLのモデルを読み込む"
+        "--sdxl", action="store_true", help="load Stable Diffusion XL model / 加载Stable Diffusion XL"
     )
     parser.add_argument(
-        "--v1", action="store_true", help="load Stable Diffusion v1.x model / Stable Diffusion 1.xのモデルを読み込む"
+        "--v1", action="store_true", help="load Stable Diffusion v1.x model / 加载Stable Diffusion 1.x"
     )
     parser.add_argument(
-        "--v2", action="store_true", help="load Stable Diffusion v2.0 model / Stable Diffusion 2.0のモデルを読み込む"
+        "--v2", action="store_true", help="load Stable Diffusion v2.0 model / 加载Stable Diffusion 2.0"
     )
     parser.add_argument(
-        "--v_parameterization", action="store_true", help="enable v-parameterization training / v-parameterization学習を有効にする"
+        "--v_parameterization", action="store_true", help="enable v-parameterization training / 启用v-parameterization学习"
     )
 
-    parser.add_argument("--prompt", type=str, default=None, help="prompt / プロンプト")
+    parser.add_argument("--prompt", type=str, default=None,
+                        help="prompt / 提示词")
     parser.add_argument(
         "--from_file",
         type=str,
         default=None,
-        help="if specified, load prompts from this file / 指定時はプロンプトをファイルから読み込む",
+        help="if specified, load prompts from this file / 从文件中导入提示词",
     )
     parser.add_argument(
         "--from_module",
         type=str,
         default=None,
-        help="if specified, load prompts from this module / 指定時はプロンプトをモジュールから読み込む",
+        help="if specified, load prompts from this module / 从module导入提示词",
     )
     parser.add_argument(
-        "--prompter_module_args", type=str, default=None, help="args for prompter module / prompterモジュールの引数"
+        "--prompter_module_args", type=str, default=None, help="args for prompter module / prompter模块参数"
     )
     parser.add_argument(
         "--interactive",
         action="store_true",
-        help="interactive mode (generates one image) / 対話モード（生成される画像は1枚になります）",
+        help="interactive mode (generates one image) / 交互模式（生成一张图像）",
     )
     parser.add_argument(
-        "--no_preview", action="store_true", help="do not show generated image in interactive mode / 対話モードで画像を表示しない"
+        "--no_preview", action="store_true", help="do not show generated image in interactive mode / 在交互模式下不显示生成的图像"
     )
     parser.add_argument(
-        "--image_path", type=str, default=None, help="image to inpaint or to generate from / img2imgまたはinpaintを行う元画像"
+        "--image_path", type=str, default=None, help="image to inpaint or to generate from / 进行img2img或inpaint的原图像"
     )
-    parser.add_argument("--mask_path", type=str, default=None, help="mask in inpainting / inpaint時のマスク")
-    parser.add_argument("--strength", type=float, default=None, help="img2img strength / img2img時のstrength")
-    parser.add_argument("--images_per_prompt", type=int, default=1, help="number of images per prompt / プロンプトあたりの出力枚数")
-    parser.add_argument("--outdir", type=str, default="outputs", help="dir to write results to / 生成画像の出力先")
+    parser.add_argument("--mask_path", type=str, default=None,
+                        help="mask in inpainting / inpaint中蒙版的路径")
+    parser.add_argument("--strength", type=float, default=None,
+                        help="img2img strength / img2img时的强度")
+    parser.add_argument("--images_per_prompt", type=int, default=1,
+                        help="number of images per prompt / 每个提示词生成图片的个数")
+    parser.add_argument("--outdir", type=str, default="outputs",
+                        help="dir to write results to / 输出路径")
     parser.add_argument(
-        "--sequential_file_name", action="store_true", help="sequential output file name / 生成画像のファイル名を連番にする"
+        "--sequential_file_name", action="store_true", help="sequential output file name / 输出图像的系列名称"
     )
     parser.add_argument(
         "--use_original_file_name",
         action="store_true",
-        help="prepend original file name in img2img / img2imgで元画像のファイル名を生成画像のファイル名の先頭に付ける",
+        help="prepend original file name in img2img / 在img2img中将原始图像的文件名附加到生成图像的文件名的开头",
     )
     # parser.add_argument("--ddim_eta", type=float, default=0.0, help="ddim eta (eta=0.0 corresponds to deterministic sampling", )
-    parser.add_argument("--n_iter", type=int, default=1, help="sample this often / 繰り返し回数")
-    parser.add_argument("--H", type=int, default=None, help="image height, in pixel space / 生成画像高さ")
-    parser.add_argument("--W", type=int, default=None, help="image width, in pixel space / 生成画像幅")
+    parser.add_argument("--n_iter", type=int, default=1,
+                        help="sample this often / 抽样重复次数")
+    parser.add_argument("--H", type=int, default=None,
+                        help="image height, in pixel space / 生成图像的高度")
+    parser.add_argument("--W", type=int, default=None,
+                        help="image width, in pixel space / 生成图像的宽度")
     parser.add_argument(
         "--original_height",
         type=int,
         default=None,
-        help="original height for SDXL conditioning / SDXLの条件付けに用いるoriginal heightの値",
+        help="original height for SDXL conditioning / SDXL模型中图像的原始高度条件",
     )
     parser.add_argument(
         "--original_width",
         type=int,
         default=None,
-        help="original width for SDXL conditioning / SDXLの条件付けに用いるoriginal widthの値",
+        help="original width for SDXL conditioning / SDXL模型中图像的原始宽度条件",
     )
     parser.add_argument(
         "--original_height_negative",
@@ -3003,7 +3232,8 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--crop_left", type=int, default=None, help="crop left for SDXL conditioning / SDXLの条件付けに用いるcrop leftの値"
     )
-    parser.add_argument("--batch_size", type=int, default=1, help="batch size / バッチサイズ")
+    parser.add_argument("--batch_size", type=int,
+                        default=1, help="batch size / バッチサイズ")
     parser.add_argument(
         "--vae_batch_size",
         type=float,
@@ -3019,7 +3249,8 @@ def setup_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no_half_vae", action="store_true", help="do not use fp16/bf16 precision for VAE / VAE処理時にfp16/bf16を使わない"
     )
-    parser.add_argument("--steps", type=int, default=50, help="number of ddim sampling steps / サンプリングステップ数")
+    parser.add_argument("--steps", type=int, default=50,
+                        help="number of ddim sampling steps / サンプリングステップ数")
     parser.add_argument(
         "--sampler",
         type=str,
@@ -3083,10 +3314,14 @@ def setup_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="shuffle prompts in iteration / 繰り返し内のプロンプトをシャッフルする",
     )
-    parser.add_argument("--fp16", action="store_true", help="use fp16 / fp16を指定し省メモリ化する")
-    parser.add_argument("--bf16", action="store_true", help="use bfloat16 / bfloat16を指定し省メモリ化する")
-    parser.add_argument("--xformers", action="store_true", help="use xformers / xformersを使用し高速化する")
-    parser.add_argument("--sdpa", action="store_true", help="use sdpa in PyTorch 2 / sdpa")
+    parser.add_argument("--fp16", action="store_true",
+                        help="use fp16 / fp16を指定し省メモリ化する")
+    parser.add_argument("--bf16", action="store_true",
+                        help="use bfloat16 / bfloat16を指定し省メモリ化する")
+    parser.add_argument("--xformers", action="store_true",
+                        help="use xformers / xformersを使用し高速化する")
+    parser.add_argument("--sdpa", action="store_true",
+                        help="use sdpa in PyTorch 2 / sdpa")
     parser.add_argument(
         "--diffusers_xformers",
         action="store_true",
@@ -3270,7 +3505,8 @@ def setup_parser() -> argparse.ArgumentParser:
         default=650,
         help="Apply Deep Shrink depth 1 until this timesteps / Deep Shrink depth 1を適用するtimesteps",
     )
-    parser.add_argument("--ds_depth_2", type=int, default=None, help="Deep Shrink depth 2 / Deep Shrinkのdepth 2")
+    parser.add_argument("--ds_depth_2", type=int, default=None,
+                        help="Deep Shrink depth 2 / Deep Shrinkのdepth 2")
     parser.add_argument(
         "--ds_timesteps_2",
         type=int,

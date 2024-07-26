@@ -1,3 +1,6 @@
+本项目fork了其他人的仓库，主要用于学习和修改，会多使用中文解释
+
+# 以下是原来的README
 This repository contains training, generation and utility scripts for Stable Diffusion.
 
 [__Change History__](#change-history) is moved to the bottom of the page. 
